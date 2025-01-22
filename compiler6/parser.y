@@ -1,0 +1,468 @@
+/****** Header definitions ******/
+%{
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "symtable.h"
+#include "astree.h"
+// function prototypes from lex
+int addString(char *str);
+void outputDataSection();
+int functionNum = 1;
+int argRegNum = 0;
+int scopeLevel = 0;
+int paramNum = 0;
+int yyerror(char *s);
+int yylex(void);
+int doAssembly;
+int debug = 0; // set to 1 to turn on extra printing
+Symbol** table;
+ASTNode* tree;
+FILE *outputFile;
+
+%}
+
+/* token value data types */
+%union { int ival; char* str; struct astnode_s * treeNode; }
+
+/* Starting non-terminal */
+%start wholeprogram
+%type <treeNode> program functions function statements statement funcall arguments argument expression globals vardecl parameters paramdecl assignment ifthenelse whileloop boolexpr localvars localdecl
+
+/* Token types */
+%token <ival> LPAREN RPAREN LBRACE RBRACE SEMICOLON ADDOP KWPROGRAM KWCALL KWFUNCTION COMMA NUMBER EQUALS KWGLOBAL KWINT KWSTRING RELOP KWRETURNVAL KWWHILE KWDO KWIF KWTHEN KWELSE LBRACKET RBRACKET
+%token <str> STRING ID
+
+%%
+/******* Rules *******/
+
+wholeprogram: globals functions program
+     {
+         tree = newASTNode(AST_PROGRAM);
+         tree->child[0] = $1;
+         tree->child[1] = $2;
+         tree->child[2] = $3;
+         if (tree->child[2] != 0) {
+          doAssembly = 1;
+         } else {
+          fprintf(stderr, "No main function found! Try using keyword program.");
+         }
+     };
+     
+program: KWPROGRAM LBRACE statements RBRACE
+     {
+          if (debug) fprintf(stderr, "program rule\n");
+          $$ = $3;
+     };
+
+functions: /*empty*/ 
+       { $$ = 0; }
+      | function functions
+       {
+           if (debug) fprintf(stderr, "functions rule\n");
+           $1->next = $2;
+           $$ = $1;
+       };
+
+function: KWFUNCTION ID LPAREN parameters RPAREN LBRACE localvars statements RBRACE
+       {
+           if (debug) fprintf(stderr, "function rule\n");
+           $$ = newASTNode(AST_FUNCTION);
+           $$->strval = $2;
+           $$->strNeedsFreed = 1;
+           $$->child[0] = $4;
+           $$->child[1] = $8;
+           $$->child[2] = $7;
+           delScopeLevel(table, 1);
+           paramNum = 0;
+       };
+
+statements: /*empty*/
+       { $$ = 0; }
+     | statement statements
+       {
+           $$ = $1;
+           $$->next = $2;
+       };
+       
+statement: funcall
+       {   
+           if (debug) fprintf(stderr, "statement rule\n");
+           $$ = $1;
+       }
+      | assignment
+       {
+           if (debug) fprintf(stderr, "statement assignment rule\n");
+           $$ = $1;
+       }
+      | ifthenelse
+       {
+           if (debug) fprintf(stderr, "statement ifthenelse rule\n");
+           $$ = $1;
+       }
+      | whileloop
+       {
+           if (debug) fprintf(stderr, "statement whileloop rule\n");
+           $$ = $1;
+       };
+       
+funcall: KWCALL ID LPAREN arguments RPAREN SEMICOLON
+       {
+           if (debug) fprintf(stderr, "function call rule\n");
+           $$ = newASTNode(AST_FUNCALL);
+           $$->strval = $2;
+           $$->strNeedsFreed = 1;
+           $$->child[0] = $4;
+       };
+       
+assignment: ID EQUALS expression SEMICOLON
+       {
+           if (debug) fprintf(stderr, "assignment rule\n");
+           Symbol* symbol = findSymbol(table, $1);
+           if (!symbol) {
+              printf("Error: Symbol %s couldn't be found\n", $1);
+              exit(1);
+           }
+           $$ = newASTNode(AST_ASSIGNMENT);
+           $$->strval = symbol->name;
+           $$->child[0] = $3;
+           $$->varKind = symbol->varKind;
+           $$->ival = symbol->offset;
+           free($1);
+       }
+     | ID LBRACKET expression RBRACKET EQUALS expression SEMICOLON {
+           if (debug) fprintf(stderr, "assignment rule\n");
+           Symbol* symbol = findSymbol(table, $1);
+           if (!symbol) {
+              printf("Error: Symbol %s couldn't be found\n", $1);
+              exit(1);
+           }
+           $$ = newASTNode(AST_ASSIGNMENT);
+           $$->strval = symbol->name;
+           $$->child[1] = $3;
+           $$->child[0] = $6;
+           $$->varKind = symbol->varKind;
+           free($1);
+       };
+
+arguments: /* empty */
+       { $$ = 0; }
+     | argument COMMA arguments
+       {
+           if (debug) fprintf(stderr, "arguments rule 2\n");
+           $$ = $1;
+           $$->next = $3;
+       }
+     | argument
+       {
+           if (debug) fprintf(stderr, "arguments rule 1\n");
+           $$ = $1;
+       };
+
+argument: expression
+       {
+           if (debug) fprintf(stderr, "expression rule 2\n");
+           $$ = newASTNode(AST_ARGUMENT);
+           $$->child[0] = $1;
+       };
+
+expression: NUMBER
+       {
+           if (debug) fprintf(stderr, "expression rule 1\n");
+           $$ = newASTNode(AST_CONSTANT);
+           $$->ival = $1;
+           $$->valType = T_INT;
+       }
+     | STRING
+       {
+           if (debug) fprintf(stderr, "argument rule 1\n");
+           int sid = addString($1);
+           $$ = newASTNode(AST_CONSTANT);
+           $$->valType = T_STRING;
+           $$->strval = $1;
+           $$->strNeedsFreed = 1;
+           $$->ival = sid;
+       }
+     | KWRETURNVAL
+       {
+           if (debug) fprintf(stderr, "RETURNVAL rules\n");
+           $$ = newASTNode(AST_CONSTANT);
+           $$->valType = T_RETURNVAL;
+       }
+     | ID
+       {
+           if (debug) fprintf(stderr, "assignment rule\n");
+           Symbol* symbol = findSymbol(table, $1);
+           if (!symbol) {
+              printf("Error: Symbol %s couldn't be found\n", $1);
+              exit(1);
+           }
+           $$ = newASTNode(AST_VARREF);
+           $$->strval = symbol->name;
+           $$->varKind = symbol->varKind;
+           $$->ival = symbol->offset;
+           free($1);
+       }
+     | ID LBRACKET expression RBRACKET {
+           if (debug) fprintf(stderr, "expression array ID rule\n");
+           Symbol* symbol = findSymbol(table, $1);
+           if (!symbol) {
+              printf("Error: Symbol %s couldn't be found\n", $1);
+              exit(1);
+           }
+           $$ = newASTNode(AST_VARREF);
+           $$->child[0] = $3;
+           $$->strval = symbol->name;
+           $$->varKind = symbol->varKind;
+           free($1);
+       }
+     | expression ADDOP expression
+       {
+           if (debug) fprintf(stderr, "argument rule 2\n");
+           $$ = newASTNode(AST_EXPRESSION);
+           $$->child[0] = $1;
+           $$->child[1] = $3;
+           $$->ival = $2;
+       };
+
+globals: /* empty */
+       { $$ = 0; }
+     | KWGLOBAL vardecl SEMICOLON globals
+       {
+           scopeLevel = 0;
+           if (debug) fprintf(stderr, "globals rule\n");
+           $$ = $2;
+           $$->next = $4;
+       };
+
+vardecl: KWINT ID LBRACKET NUMBER RBRACKET
+       {
+           if (debug) fprintf(stderr, "int declaration rule\n");
+           if (addSymbol(table, $2, 0, T_INT, $4, 0, V_GLARRAY) != 0) {
+             printf("Error adding symbol to table: %s\n", $2);
+           }
+
+           $$ = newASTNode(AST_VARDECL);
+           $$->strval = $2;
+           $$->strNeedsFreed = 1;
+           $$->valType = T_INT;
+           $$->ival = $4;
+           $$->varKind = V_GLARRAY;
+       }
+       | KWINT ID
+       {
+           if (debug) fprintf(stderr, "int declaration rule\n");
+           if (addSymbol(table, $2, scopeLevel, T_INT, 0, 0, V_GLOBAL) != 0) {
+             printf("Error adding symbol to table: %s\n", $2);
+           }
+
+           $$ = newASTNode(AST_VARDECL);
+           $$->valType = T_INT;
+           $$->strNeedsFreed = 1;
+           $$->strval = $2;
+           $$->varKind = V_GLOBAL;
+       }
+     | KWSTRING ID
+       {
+           if (debug) fprintf(stderr, "string declaration rule\n");
+           if (addSymbol(table, $2, scopeLevel, T_STRING, 0, 0, V_GLOBAL) != 0) {
+             printf("Error adding symbol to table: %s\n", $2);
+           }
+
+           $$ = newASTNode(AST_VARDECL);
+           $$->valType = T_STRING;
+           $$->strval = $2;
+           $$->varKind = V_GLOBAL;
+       };
+
+parameters: /* empty */
+       { $$ = 0; }
+     | paramdecl
+       {
+           scopeLevel = 1;
+           if (debug) fprintf(stderr, "parameters paramdecl rule\n");
+           $$ = $1;
+       }
+     | paramdecl COMMA parameters
+       {
+           scopeLevel = 1;
+           if (debug) fprintf(stderr, "parameters declaration comma parameters rule\n");
+           $$ = $1;
+           $$->next = $3;
+       };
+
+paramdecl: KWINT ID
+       {
+           if (debug) fprintf(stderr, "param int declaration rule\n");
+           if (addSymbol(table, $2, 1, T_INT, 0, paramNum, V_PARAM) != 0) {
+            printf("Error adding symbol to table: %s\n", $2);
+           }
+
+           $$ = newASTNode(AST_VARDECL);
+           $$->strNeedsFreed = 1;
+           $$->strval = $2;
+           $$->valType = T_INT;
+           $$->ival = paramNum++;
+           $$->varKind = V_PARAM;
+       }
+     | KWSTRING ID
+       {
+           if (addSymbol(table, $2, 1, T_STRING, 0, paramNum, V_PARAM) != 0) {
+            printf("Error adding symbol to table: %s\n", $2);
+           }
+
+           $$ = newASTNode(AST_VARDECL);
+           $$->strval = $2;
+           $$->strNeedsFreed = 1;
+           $$->valType = T_STRING;
+           $$->ival = paramNum++;
+           $$->varKind = V_PARAM;
+       };
+
+localvars: /* empty */
+       { $$ = 0; }
+     | localdecl SEMICOLON localvars
+       {
+           scopeLevel = 1;
+           if (debug) fprintf(stderr, "localvars\n");
+           $$ = $1;
+           $$->next = $3;
+       }
+
+localdecl: KWINT ID
+       {
+           if (debug) fprintf(stderr, "local int declaration rule\n");
+           if (addSymbol(table, $2, 1, T_INT, 0, paramNum, V_LOCAL) != 0) {
+            printf("Error adding symbol to table: %s\n", $2);
+           }
+
+           $$ = newASTNode(AST_VARDECL);
+           $$->strval = $2;
+           $$->valType = T_INT;
+           $$->strNeedsFreed = 1;
+           $$->ival = paramNum++;
+           $$->varKind = V_LOCAL;
+       }
+     | KWSTRING ID
+       {
+           if (debug) fprintf(stderr, "local string declaration rule\n");
+           if (addSymbol(table, $2, 1, T_STRING, 0, paramNum, V_LOCAL) != 0) {
+            printf("Error adding symbol to table: %s\n", $2);
+           }
+
+           $$ = newASTNode(AST_VARDECL);
+           $$->strval = $2;
+           $$->valType = T_STRING;
+           $$->ival = paramNum++;
+           $$->varKind = V_LOCAL;
+       }
+
+ifthenelse: KWIF LPAREN boolexpr RPAREN KWTHEN LBRACE statements RBRACE KWELSE LBRACE statements RBRACE
+       {
+           if (debug) fprintf(stderr, "ifthenelse rule\n");
+           $$ = newASTNode(AST_IFTHEN);
+           $$->child[0] = $3;
+           $$->child[1] = $7;
+           $$->child[2] = $11;
+       };
+
+whileloop: KWWHILE LPAREN boolexpr RPAREN KWDO LBRACE statements RBRACE
+       {
+           if (debug) fprintf(stderr, "whileloop rule\n");
+           $$ = newASTNode(AST_WHILE);
+           $$->child[0] = $3;
+           $$->child[1] = $7;
+       };
+
+boolexpr: expression RELOP expression
+       {
+           if (debug) fprintf(stderr, "boolexpr rule\n");
+           $$ = newASTNode(AST_RELEXPR);
+           $$->child[0] = $1;
+           $$->child[1] = $3;
+           $$->ival = $2;
+       };
+%%
+
+/******* Functions *******/
+
+int stringCount = 0;
+char *strings[128];
+
+int addString(char *str)
+{
+    int i = stringCount++;
+    strings[i] = strdup(str);
+    return(i);
+}
+
+void outputDataSection()
+{
+   int i;
+   for (i = 0; i < stringCount; i++) {
+      fprintf(outputFile, ".SC%d:\t.string\t%s\n",i,strings[i]);
+      free(strings[i]);
+   }
+}
+
+extern FILE *yyin; // from lex
+extern void yylex_destroy();
+
+int main(int argc, char **argv)
+{
+  char newFile[64];
+  doAssembly = 0;
+  int stat;
+   if (argc==2) {
+      yyin = fopen(argv[1],"r");
+      if (!yyin) {
+         printf("Error: unable to open file (%s)\n",argv[1]);
+         return(1);
+      }
+   }
+
+   if (argc == 2) {
+     if (debug) fprintf(stderr, ".s file creation started\n");
+     strcpy(newFile, argv[1]);
+
+     char *dot = strchr(newFile, '.');
+     if (dot && strcmp(dot, ".j") == 0) *dot = '\0';
+
+     strcat(newFile, ".s");
+     outputFile = fopen(newFile, "w");
+     if (outputFile == NULL) {
+       printf("Error: Could not create file.\n");
+       fclose(yyin);
+       return(1);
+     }
+   } else {
+     yyin = stdin;
+     outputFile = stdout;
+   }
+   table = newSymbolTable();
+   stat = yyparse();
+   fclose(yyin);
+   if (doAssembly && !stat) genCodeFromASTree(tree, 0, outputFile);
+   else printASTree(tree, 0, stderr);
+   freeAllSymbols(table);
+   free(table);
+   freeASTree(tree);
+   yylex_destroy();
+   fclose(outputFile);
+   return stat;
+}
+
+extern int yylineno; // from lex
+
+int yyerror(char *s)
+{
+   fprintf(stderr, "Error: line %d: %s\n",yylineno,s);
+   return 0;
+}
+
+int yywrap()
+{
+   return(1);
+}
+

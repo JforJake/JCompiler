@@ -1,0 +1,12 @@
+grade: 18
+
+--'main' function does not account for commandline argument flags; '-t' and '-d'
+
+--Symtable should still be used:
+	--In the 'expression: ID' and 'assignment: ...' rules; need to check if reference variable has been declared. Throw out an error message and then exit if not declared.
+	Consider using findSymbol to check if variable is in the symbol table (has been declared)
+	--In 'vardec:...', use 'addSymbol' function to add to symtable
+
+--Missing assembly code for AST_ARGUMENT case when argument is a constant number or AST_EXPRESSION:
+	-The assembly code for any AST node type created under the 'expression: ...' rule should use t0 register
+	-In the AST_ARGUMENT case; move  from t0 to appropriate argument register, e.g 'mv a0, t0'

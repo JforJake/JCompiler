@@ -1,0 +1,4 @@
+program
+{
+    call printStr("Hello World!\n");
+}

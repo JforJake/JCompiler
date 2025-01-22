@@ -1,0 +1,15 @@
+grade: 15.5
+
+Compiler does not handle multiple calls to printStr;
+	-Assembly code output for functon call should not be static (hard-coded). 
+	-Use sprintf under each parser rule to print assembly code to string and then use printf to printout the
+	assembly code in the first parser rule.
+
+For instance, the assembly code in the funcall rule could look like this:
+ funcall: KWCALL ID LPAREN STRING RPAREN SEMICOLON
+       {
+    
+	  $$ = (char*) malloc(strlen(128)+8);  // allocate space to $$
+      sprintf($$,"\tla\ta0, .SC%d\n\tjal\t%s\n",lastStringIndex,$1); // sprintf the function call assembly to $$
+	  savedStrings[lastStringIndex++] = $4;
+       };

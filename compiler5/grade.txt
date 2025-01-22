@@ -1,0 +1,5 @@
+grade: 28.5
+
+--'main' function does not account for commandline argument flags; '-t' and '-d'
+--In the 'expression: ID' rule; need to check if reference variable has been declared. 
+	

@@ -1,0 +1,12 @@
+grade: 18
+
+--Regular expression for ID not capturing 'var1' as an ID
+	ID begins with a Letter or underscore, followed by 0 or more Letters, underscores or Numbers
+
+--Program should not allow for multiple declarations of the same variable
+(consider using 'findSymbol' to check if variable has already been declared in 'vardecl: KWINT ID' and 'vardecl: KWSTRING ID' rules)
+
+--In the 'expression: ID'  rule; need to check if reference variable has been declared. Throw out an error message and then exit if not declared.
+	Consider using findSymbol to check if variable is in the symbol table (has been declared)
+
+

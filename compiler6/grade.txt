@@ -1,0 +1,3 @@
+grade: 29.5
+
+--Program allows for declaration of duplicate variables of same name in the same scope level
